@@ -1,6 +1,12 @@
+<div align="center">
+
+<img src="https://dsazurefilestorage.blob.core.windows.net/public/jupiter-banner.svg" alt="Jupiter CLI" width="800">
+
 # Jupiter CLI - Public Issue Tracker & Roadmap
 
 This is the public repository for tracking issues, feature requests, and roadmap for the Jupiter CLI project.
+
+</div>
 
 ## 🐛 Issue Tracking
 
