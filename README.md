@@ -186,8 +186,7 @@ Based on [Gemini CLI](https://github.com/google/generative-ai-cli) (Apache 2.0).
 ## 📧 Support
 
 - **Community**: Use [GitHub Issues](https://github.com/worksquares/jupiter-cli/issues) and [Discussions](https://github.com/worksquares/jupiter-cli/discussions)
-- **Commercial**: support@digisquares.com
-- **Security**: security@digisquares.com
+- **Email**: contact@digisquares.com
 
 ---
 
