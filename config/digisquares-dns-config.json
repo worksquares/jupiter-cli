@@ -1,0 +1,33 @@
+{
+  "domain": "digisquares.com",
+  "environment": "production",
+  "subdomainStrategy": {
+    "patterns": {
+      "production": "{userId}-{projectId}.app",
+      "development": "{userId}-{projectId}.dev",
+      "testing": "{userId}-{projectId}.test"
+    },
+    "defaults": {
+      "prefix": "app",
+      "ttl": 300
+    }
+  },
+  "wildcard": {
+    "enabled": true,
+    "subdomains": [
+      "dev",
+      "test",
+      "demo"
+    ]
+  },
+  "ssl": {
+    "enabled": false,
+    "provider": "letsencrypt",
+    "email": "admin@digisquares.com"
+  },
+  "cleanup": {
+    "enabled": true,
+    "retentionHours": 24,
+    "checkIntervalMinutes": 60
+  }
+}

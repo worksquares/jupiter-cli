@@ -1,0 +1,23 @@
+<div class="text-center space-y-4">
+  <h3 class="text-3xl font-bold text-gray-900">Count: {{ count }}</h3>
+  <div class="flex justify-center gap-3">
+    <button 
+      (click)="decrement()" 
+      class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition-colors flex items-center gap-2"
+    >
+      <lucide-icon name="minus" [size]="20"></lucide-icon>
+    </button>
+    <button 
+      (click)="reset()" 
+      class="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 transition-colors"
+    >
+      Reset
+    </button>
+    <button 
+      (click)="increment()" 
+      class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 transition-colors flex items-center gap-2"
+    >
+      <lucide-icon name="plus" [size]="20"></lucide-icon>
+    </button>
+  </div>
+</div>
