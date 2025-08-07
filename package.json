@@ -73,6 +73,7 @@
   "author": "Intelligent Agent System",
   "license": "MIT",
   "dependencies": {
+    "2": "^3.0.0",
     "@azure/arm-appservice": "^17.0.0",
     "@azure/arm-containerinstance": "^9.1.0",
     "@azure/arm-containerregistry": "^10.1.0",
