@@ -13,8 +13,10 @@ import { ProjectManager } from './project-manager';
 import { AgentInterface } from '../core/types';
 import { SegregationContext } from '../core/segregation-types';
 import { TemplateManager } from './template-manager';
+import { ProjectEnvironmentService } from './project-env-service';
 import { v4 as uuidv4 } from 'uuid';
 import { EventEmitter } from 'eventemitter3';
+import * as path from 'path';
 
 export interface FrontendWorkflowConfig {
   db: JupiterDBClient;
@@ -23,6 +25,7 @@ export interface FrontendWorkflowConfig {
   projectManager: ProjectManager;
   staticWebApp: StaticWebAppManager;
   agent: AgentInterface;
+  envService?: ProjectEnvironmentService;
   baseDomain?: string;
   githubOrg?: string;
 }
@@ -70,12 +73,19 @@ export class FrontendWorkflowManager extends EventEmitter {
   private logger: Logger;
   private config: FrontendWorkflowConfig;
   private templateManager: TemplateManager;
+  private envService: ProjectEnvironmentService | null;
 
   constructor(config: FrontendWorkflowConfig) {
     super();
     this.config = config;
     this.logger = new Logger('FrontendWorkflowManager');
     this.templateManager = new TemplateManager();
+    this.envService = config.envService || null;
+    
+    // Initialize env service if not provided
+    if (!this.envService && config.db) {
+      this.envService = new ProjectEnvironmentService(config.db);
+    }
   }
 
   /**
@@ -129,6 +139,18 @@ export class FrontendWorkflowManager extends EventEmitter {
       await this.generateFrontendCode(context, request, taskResult.branch);
       
       this.emitStatus('code_generation', 'completed', 'Frontend code generated');
+
+      // Step 3.5: Configure environment variables
+      this.emitStatus('env_configuration', 'in_progress', 'Configuring environment variables...');
+      
+      await this.configureProjectEnvironment(
+        projectResult.project.id,
+        projectResult.project.name,
+        request.framework,
+        context
+      );
+      
+      this.emitStatus('env_configuration', 'completed', 'Environment variables configured');
 
       // Step 4: Build the project in ACI
       this.emitStatus('build', 'in_progress', 'Building frontend project...');
@@ -245,6 +267,21 @@ export class FrontendWorkflowManager extends EventEmitter {
     if (request.template && ['react', 'vue', 'angular'].includes(request.template)) {
       await this.useTemplate(context, request.template, request.projectName);
       return;
+    }
+
+    // First, configure environment variables if service is available
+    if (this.envService) {
+      try {
+        await this.envService.createProjectEnvConfig(
+          context.projectId!,
+          request.projectName,
+          request.framework,
+          // Add any custom variables specific to the project
+          request.metadata?.envVariables
+        );
+      } catch (error) {
+        this.logger.warn('Failed to configure env variables before code generation', error);
+      }
     }
 
     const prompt = this.buildCodeGenerationPrompt(request);
@@ -382,6 +419,131 @@ Co-Authored-By: Jupiter Agent <agent@jupiter.ai>`;
       remote: 'origin',
       branch
     });
+  }
+
+  /**
+   * Configure environment variables for the project
+   */
+  private async configureProjectEnvironment(
+    projectId: string,
+    projectName: string,
+    framework: string,
+    context: SegregationContext
+  ): Promise<void> {
+    if (!this.envService) {
+      this.logger.warn('Environment service not available, skipping env configuration');
+      return;
+    }
+
+    try {
+      // Create or fetch environment configuration from Jupiter DB
+      const envConfig = await this.envService.createProjectEnvConfig(
+        projectId,
+        projectName,
+        framework,
+        // Add framework-specific custom variables
+        this.getFrameworkSpecificEnvVars(framework)
+      );
+
+      // Generate .env files in the ACI workspace
+      const bashAdapter = this.config.agent.tools.get('aciBash');
+      if (!bashAdapter) {
+        this.logger.warn('Bash adapter not found, cannot generate .env files');
+        return;
+      }
+
+      // Generate .env file content
+      await this.envService.generateEnvFile(
+        projectId,
+        '/tmp',  // Generate to temp first
+        'development'
+      );
+
+      // Copy generated .env files to workspace
+      await bashAdapter.execute({
+        context,
+        command: 'cp /tmp/.env /workspace/.env && cp /tmp/.env.example /workspace/.env.example',
+        timeout: 5000
+      });
+
+      this.logger.info('Environment variables configured for project', {
+        projectId,
+        framework,
+        variableCount: envConfig.variables.length
+      });
+
+    } catch (error) {
+      this.logger.error('Failed to configure environment variables', error);
+      // Don't fail the workflow, just log the error
+    }
+  }
+
+  /**
+   * Get framework-specific environment variables
+   */
+  private getFrameworkSpecificEnvVars(framework: string): any[] {
+    const commonVars = [
+      {
+        key: 'JUPITER_PROJECT_ID',
+        value: '',
+        type: 'string',
+        category: 'service',
+        isSecret: false,
+        isRequired: true,
+        description: 'Jupiter project identifier'
+      },
+      {
+        key: 'JUPITER_API_URL',
+        value: process.env.JUPITER_API_URL || 'https://api.jupiter.ai',
+        type: 'string',
+        category: 'api',
+        isSecret: false,
+        isRequired: true,
+        description: 'Jupiter API endpoint'
+      }
+    ];
+
+    const frameworkSpecific: Record<string, any[]> = {
+      react: [
+        ...commonVars,
+        {
+          key: 'VITE_JUPITER_API_KEY',
+          value: '',
+          type: 'secret',
+          category: 'api',
+          isSecret: true,
+          isRequired: false,
+          description: 'API key for Jupiter services'
+        }
+      ],
+      vue: [
+        ...commonVars,
+        {
+          key: 'VUE_APP_JUPITER_API_KEY',
+          value: '',
+          type: 'secret',
+          category: 'api',
+          isSecret: true,
+          isRequired: false,
+          description: 'API key for Jupiter services'
+        }
+      ],
+      angular: [
+        ...commonVars,
+        {
+          key: 'NG_APP_JUPITER_API_KEY',
+          value: '',
+          type: 'secret',
+          category: 'api',
+          isSecret: true,
+          isRequired: false,
+          description: 'API key for Jupiter services'
+        }
+      ],
+      vanilla: commonVars
+    };
+
+    return frameworkSpecific[framework] || commonVars;
   }
 
   /**

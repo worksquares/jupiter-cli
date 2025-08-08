@@ -51,7 +51,6 @@ logs/
 .cache/
 
 # Docker files
-Dockerfile*
 docker-compose*.yml
 .dockerignore
 

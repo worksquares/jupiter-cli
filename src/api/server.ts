@@ -24,6 +24,12 @@ import { v4 as uuidv4 } from 'uuid';
 import { allAdapters } from '../tools/adapters';
 import { AuthMiddleware, AuthRequest } from './auth-middleware';
 import { validateWithSchema, ToolParameterSchemas } from '../utils/validation-schemas';
+// ...existing code...
+import { StaticWebsiteHandler } from './static-website-handler';
+// ...existing code...
+// ...existing code...
+import projectEnvRoutes from './routes/project-env-routes';
+// ...existing code...
 import crypto from 'crypto';
 
 // Load environment variables
@@ -36,11 +42,12 @@ export class APIServer {
   private port: number;
   private activeTasks: Map<string, Task>;
   private auth: AuthMiddleware;
+  private staticHandler: StaticWebsiteHandler;
 
   constructor(config?: Partial<AgentConfig>) {
     this.app = express();
     this.logger = new Logger('APIServer');
-    this.port = parseInt(process.env.PORT || '3000');
+    this.port = parseInt(process.env.PORT || '3002');
     this.activeTasks = new Map();
 
     // Initialize authentication
@@ -56,6 +63,9 @@ export class APIServer {
       enableAPIKey: true,
       excludePaths: ['/health', '/auth/login', '/auth/register', '/deploy']
     });
+
+    // Initialize static website handler
+    this.staticHandler = new StaticWebsiteHandler();
 
     // Create agent with default config
     const agentConfig: AgentConfig = {
@@ -132,6 +142,9 @@ export class APIServer {
    * Setup middleware
    */
   private setupMiddleware(): void {
+    // Static website handler - must be before other middleware
+    this.app.use(this.staticHandler.handleUIRequest);
+    
     // Security
     this.app.use(helmet({
       contentSecurityPolicy: {
@@ -239,6 +252,9 @@ export class APIServer {
       const apiKey = this.auth.generateAPIKey();
       return res.json({ apiKey });
     });
+
+    // Mount project environment routes
+    this.app.use('/api', projectEnvRoutes);
 
     // Create task
     this.app.post('/tasks', async (req: AuthRequest, res, next): Promise<void> => {
@@ -439,6 +455,49 @@ export class APIServer {
       } catch (error) {
         next(error);
       }
+    });
+
+    // Static site deployment endpoint
+    this.app.post('/deploy/static', async (req: AuthRequest, res, next): Promise<void> => {
+      try {
+        const { projectId, sourceCode, framework } = req.body;
+        
+        if (!projectId || !sourceCode || !framework) {
+          res.status(400).json({
+            error: 'Missing required fields: projectId, sourceCode, framework'
+          });
+          return;
+        }
+
+        const result = await this.staticHandler.deployStaticSite(
+          projectId,
+          sourceCode,
+          framework
+        );
+
+        if (result.success) {
+          res.json({
+            success: true,
+            url: result.url,
+            message: 'Static site deployed successfully'
+          });
+        } else {
+          res.status(500).json({
+            success: false,
+            error: result.error
+          });
+        }
+      } catch (error) {
+        next(error);
+      }
+    });
+
+    // Get static site deployment status
+    this.app.get('/deploy/static/:projectId', (req: AuthRequest, res): Response => {
+      const { projectId } = req.params;
+      const status = this.staticHandler.getDeploymentStatus(projectId);
+      
+      return res.json(status);
     });
 
     // Deployment endpoint (no auth required for demo)
