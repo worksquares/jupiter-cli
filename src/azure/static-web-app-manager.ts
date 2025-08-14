@@ -8,6 +8,7 @@ import { JupiterDBClient } from '../database/jupiter-db-client';
 import { v4 as uuidv4 } from 'uuid';
 import { AzureAPIClient } from '../clients/azure-api-client';
 import { azureAPIConfig } from '../config/azure-api-config';
+import { DigisquaresDNSManager } from '../dns/digisquares-dns-manager';
 
 export interface StaticWebAppConfig {
   subscriptionId: string;
@@ -54,12 +55,17 @@ export class StaticWebAppManager {
   private logger: Logger;
   private db: JupiterDBClient;
   private config: StaticWebAppConfig;
+  private dnsManager: DigisquaresDNSManager;
 
   constructor(config: StaticWebAppConfig, db: JupiterDBClient) {
     this.config = config;
     this.db = db;
     this.logger = new Logger('StaticWebAppManager');
     this.azureClient = new AzureAPIClient(azureAPIConfig);
+    this.dnsManager = new DigisquaresDNSManager(
+      { baseDomain: 'digisquares.in', enableSSL: true },
+      db
+    );
   }
 
   /**
@@ -119,11 +125,27 @@ export class StaticWebAppManager {
         await this.setEnvironmentVariables(swaId, options.name, options.environmentVariables);
       }
 
-      // Generate custom domain if base domain is configured
-      let customDomain: string | undefined;
-      if (this.config.baseDomain) {
-        customDomain = await this.generateAndConfigureDomain(swaId, options.name);
-      }
+      // Automatically assign digisquares.in subdomain
+      const subdomainResult = await this.dnsManager.assignSubdomain({
+        projectName: options.name,
+        deploymentType: 'static-web-app',
+        targetEndpoint: defaultHostname,
+        enableSSL: true,
+        description: `Static Web App for ${options.name}`,
+        tags: {
+          deploymentId,
+          swaId,
+          repository: options.repositoryUrl
+        }
+      });
+      
+      const customDomain = subdomainResult.fullDomain;
+      
+      this.logger.info('Digisquares.in subdomain assigned', {
+        subdomain: subdomainResult.subdomain,
+        fullDomain: customDomain,
+        ssl: subdomainResult.sslEnabled
+      });
 
       this.logger.info('Static Web App created', {
         name: options.name,
@@ -267,20 +289,6 @@ export class StaticWebAppManager {
     };
   }
 
-  /**
-   * Generate and configure a subdomain
-   */
-  private async generateAndConfigureDomain(
-    staticWebAppId: string,
-    appName: string
-  ): Promise<string> {
-    const subdomain = appName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-    const domainName = `${subdomain}.${this.config.baseDomain}`;
-
-    await this.configureCustomDomain(staticWebAppId, appName, domainName);
-
-    return domainName;
-  }
 
   /**
    * Set environment variables for Static Web App

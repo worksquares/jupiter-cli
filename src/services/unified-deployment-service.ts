@@ -7,6 +7,9 @@ import { Logger } from '../utils/logger';
 import { AzureAPIClient, UnifiedDeploymentRequest, APIResponse } from '../clients/azure-api-client';
 import { azureAPIConfig } from '../config/azure-api-config';
 import { SubdomainService } from './subdomain-service';
+import { StaticWebAppManager } from '../azure/static-web-app-manager';
+import { BlobStorageStaticWebsiteManager } from '../azure/blob-storage-static-website-manager';
+import { JupiterDBClient } from '../database/jupiter-db-client';
 
 export interface DeploymentOptions {
   projectName: string;
@@ -19,6 +22,11 @@ export interface DeploymentOptions {
   autoDetect?: boolean;
   enableSSL?: boolean;
   enableMonitoring?: boolean;
+  deploymentType?: 'auto' | 'static-web-app' | 'blob-storage' | 'container' | 'app-service';
+  enableCDN?: boolean;
+  sourcePath?: string;
+  repositoryUrl?: string;
+  branch?: string;
   resources?: {
     cpu?: number;
     memory?: number;
@@ -49,7 +57,7 @@ export interface DeploymentResult {
 }
 
 export interface DeploymentAnalysis {
-  recommendedService: 'container-instance' | 'app-service' | 'static-web-app';
+  recommendedService: 'container-instance' | 'app-service' | 'static-web-app' | 'blob-storage';
   confidence: number;
   reasoning: string;
   estimatedCost: number;
@@ -63,12 +71,16 @@ export interface DeploymentAnalysis {
   hasBackend: boolean;
   hasDatabase: boolean;
   expectedTraffic: 'low' | 'medium' | 'high';
+  recommendCDN?: boolean;
 }
 
 export class UnifiedDeploymentService {
   private logger: Logger;
   private azureClient: AzureAPIClient;
   private subdomainService: SubdomainService;
+  private staticWebAppManager?: StaticWebAppManager;
+  private blobStorageManager?: BlobStorageStaticWebsiteManager;
+  private db?: JupiterDBClient;
   private activeDeployments: Map<string, DeploymentResult>;
   private readonly MAX_RETRIES = 3;
   private readonly RETRY_DELAY = 2000;
@@ -79,6 +91,34 @@ export class UnifiedDeploymentService {
     try {
       this.azureClient = new AzureAPIClient(azureAPIConfig);
       this.subdomainService = new SubdomainService();
+      
+      // Initialize database connection if available
+      try {
+        const dbConfig = {
+          host: process.env.MYSQL_HOST || 'localhost',
+          port: parseInt(process.env.MYSQL_PORT || '3306'),
+          user: process.env.MYSQL_USER || 'root',
+          password: process.env.MYSQL_PASSWORD || '',
+          database: process.env.MYSQL_DATABASE || 'jupiterdb'
+        };
+        
+        this.db = new JupiterDBClient(dbConfig);
+        
+        // Initialize managers with database
+        const azureConfig = {
+          subscriptionId: process.env.AZURE_SUBSCRIPTION_ID || '',
+          resourceGroup: process.env.AZURE_RESOURCE_GROUP || 'jupiter-resources',
+          location: process.env.AZURE_LOCATION || 'eastus2',
+          baseDomain: process.env.BASE_DOMAIN || 'digisquares.in'
+        };
+        
+        if (this.db) {
+          this.staticWebAppManager = new StaticWebAppManager(azureConfig, this.db);
+          this.blobStorageManager = new BlobStorageStaticWebsiteManager(azureConfig, this.db);
+        }
+      } catch (dbError) {
+        this.logger.warn('Database not available, some features may be limited', dbError);
+      }
     } catch (error) {
       this.logger.error('Failed to initialize services', error);
       throw new Error('Failed to initialize UnifiedDeploymentService: ' + (error as Error).message);
@@ -101,7 +141,17 @@ export class UnifiedDeploymentService {
     
     this.logger.info('Starting unified deployment', { options });
 
-    // Check API health before deployment
+    // Determine deployment type
+    const deploymentType = await this.determineDeploymentType(options);
+    
+    // Route to appropriate deployment method
+    if (deploymentType === 'blob-storage') {
+      return this.deployToBlobStorage(options);
+    } else if (deploymentType === 'static-web-app') {
+      return this.deployToStaticWebApp(options);
+    }
+
+    // Check API health before deployment (for container/app-service)
     try {
       await this.azureClient.ensureHealthy();
     } catch (error) {
@@ -488,7 +538,7 @@ export class UnifiedDeploymentService {
     return sanitized.substring(0, 63);
   }
 
-  private mapServiceType(type: string | undefined): 'container-instance' | 'app-service' | 'static-web-app' {
+  private mapServiceType(type: string | undefined): 'container-instance' | 'app-service' | 'static-web-app' | 'blob-storage' {
     if (!type) return 'app-service';
     
     const normalizedType = type.toLowerCase();
@@ -506,9 +556,180 @@ export class UnifiedDeploymentService {
       case 'static':
       case 'swa':
         return 'static-web-app';
+      case 'blob-storage':
+      case 'blob':
+      case 'storage':
+        return 'blob-storage';
       default:
         this.logger.warn(`Unknown service type: ${type}, defaulting to app-service`);
         return 'app-service';
+    }
+  }
+
+  /**
+   * Determine the best deployment type based on options
+   */
+  private async determineDeploymentType(options: DeploymentOptions): Promise<string> {
+    // If explicitly specified, use that
+    if (options.deploymentType && options.deploymentType !== 'auto') {
+      return options.deploymentType;
+    }
+
+    // Auto-detect based on characteristics
+    const isStaticSite = this.isStaticSite(options);
+    const hasGitRepo = Boolean(options.repositoryUrl || options.sourceUrl?.includes('github'));
+    const expectedTraffic = this.estimateTraffic(options);
+    const needsCDN = options.enableCDN || expectedTraffic === 'high';
+    const hasSourcePath = Boolean(options.sourcePath);
+
+    // Decision logic
+    if (isStaticSite) {
+      if (hasGitRepo && !needsCDN) {
+        // GitHub integration favors Static Web Apps
+        return 'static-web-app';
+      } else if (hasSourcePath || needsCDN) {
+        // Local files or CDN requirement favors Blob Storage
+        return 'blob-storage';
+      } else {
+        // Default for static sites
+        return options.environment === 'prod' ? 'blob-storage' : 'static-web-app';
+      }
+    }
+
+    // For dynamic applications
+    if (options.dockerImage) {
+      return 'container';
+    }
+
+    return 'app-service';
+  }
+
+  /**
+   * Check if the project is a static website
+   */
+  private isStaticSite(options: DeploymentOptions): boolean {
+    const staticFrameworks = ['react', 'vue', 'angular', 'svelte', 'next', 'gatsby', 'vanilla', 'html'];
+    const framework = options.framework?.toLowerCase() || '';
+    
+    // Check if it's a known static framework
+    if (staticFrameworks.some(f => framework.includes(f))) {
+      // But not if it has backend indicators
+      return !this.hasBackend(options);
+    }
+
+    // Check for static indicators in environment
+    return !options.runtime && !options.dockerImage && !this.hasBackend(options);
+  }
+
+  /**
+   * Deploy to Azure Blob Storage
+   */
+  private async deployToBlobStorage(options: DeploymentOptions): Promise<DeploymentResult> {
+    if (!this.blobStorageManager) {
+      throw new Error('Blob Storage deployment is not available. Database connection required.');
+    }
+
+    this.logger.info('Deploying to Azure Blob Storage', { projectName: options.projectName });
+
+    try {
+      const deployment = await this.blobStorageManager.deployStaticWebsite({
+        name: options.projectName,
+        projectId: options.projectName,
+        taskId: `task-${Date.now()}`,
+        sourcePath: options.sourcePath || './dist',
+        indexDocument: 'index.html',
+        errorDocument: '404.html',
+        enableCDN: options.enableCDN !== false,
+        customDomain: options.customDomain,
+        environmentVariables: options.environmentVariables
+      });
+
+      const result: DeploymentResult = {
+        deploymentId: deployment.deploymentId,
+        name: options.projectName,
+        type: 'blob-storage',
+        url: deployment.customDomain || deployment.cdnEndpoint || deployment.primaryEndpoint,
+        customDomain: deployment.customDomain,
+        state: deployment.status,
+        framework: options.framework,
+        location: 'eastus2',
+        createdAt: new Date().toISOString(),
+        analysis: {
+          serviceType: 'blob-storage',
+          confidence: 0.95,
+          reason: 'Static website deployed to Azure Blob Storage with CDN and automatic digisquares.in subdomain',
+          estimatedCost: 5
+        },
+        nextSteps: [
+          `✅ Website is live at: https://${deployment.customDomain}`,
+          '🔒 SSL certificate automatically configured',
+          deployment.cdnEndpoint ? '🌍 CDN endpoint configured for global distribution' : '',
+          '📊 Monitor usage in Azure Portal',
+          `🔗 Primary endpoint: ${deployment.primaryEndpoint}`
+        ].filter(Boolean)
+      };
+
+      this.activeDeployments.set(result.deploymentId, result);
+      return result;
+
+    } catch (error) {
+      this.logger.error('Blob Storage deployment failed', error);
+      throw new Error(`Failed to deploy to Blob Storage: ${(error as Error).message}`);
+    }
+  }
+
+  /**
+   * Deploy to Azure Static Web Apps
+   */
+  private async deployToStaticWebApp(options: DeploymentOptions): Promise<DeploymentResult> {
+    if (!this.staticWebAppManager) {
+      throw new Error('Static Web App deployment is not available. Database connection required.');
+    }
+
+    this.logger.info('Deploying to Azure Static Web Apps', { projectName: options.projectName });
+
+    try {
+      const deployment = await this.staticWebAppManager.createStaticWebApp({
+        name: options.projectName,
+        projectId: options.projectName,
+        taskId: `task-${Date.now()}`,
+        repositoryUrl: options.repositoryUrl || '',
+        branch: options.branch || 'main',
+        framework: (options.framework as any) || 'react',
+        environmentVariables: options.environmentVariables
+      });
+
+      const result: DeploymentResult = {
+        deploymentId: deployment.deploymentId,
+        name: options.projectName,
+        type: 'static-web-app',
+        url: `https://${deployment.customDomain}` || deployment.defaultHostname,
+        customDomain: deployment.customDomain,
+        state: deployment.status,
+        framework: options.framework,
+        location: 'eastus2',
+        createdAt: new Date().toISOString(),
+        analysis: {
+          serviceType: 'static-web-app',
+          confidence: 0.9,
+          reason: 'Static Web App with GitHub integration and automatic digisquares.in subdomain',
+          estimatedCost: 0
+        },
+        nextSteps: [
+          `✅ Website is live at: https://${deployment.customDomain}`,
+          '🔒 SSL certificate automatically configured',
+          '🚀 Push code to GitHub repository to trigger deployment',
+          `📦 Default hostname: ${deployment.defaultHostname}`,
+          '📊 Monitor deployment in Azure Portal'
+        ].filter(Boolean)
+      };
+
+      this.activeDeployments.set(result.deploymentId, result);
+      return result;
+
+    } catch (error) {
+      this.logger.error('Static Web App deployment failed', error);
+      throw new Error(`Failed to deploy Static Web App: ${(error as Error).message}`);
     }
   }
   

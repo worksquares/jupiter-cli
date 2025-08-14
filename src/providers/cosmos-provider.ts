@@ -21,8 +21,8 @@ export class CosmosProvider extends BaseAIProvider {
       baseURL,
       headers: {
         'Content-Type': 'application/json',
-        // CosmosAPI expects API key in x-api-key header
-        ...(config.apiKey ? { 'x-api-key': config.apiKey } : {})
+        // CosmosAPI expects Bearer token in Authorization header
+        ...(config.apiKey ? { 'Authorization': `Bearer ${config.apiKey}` } : {})
       },
       timeout: config.timeout || 120000, // Increased to 2 minutes
       maxBodyLength: Infinity,
@@ -47,9 +47,9 @@ export class CosmosProvider extends BaseAIProvider {
           content: msg.content
         }));
 
-        // Prepare request payload
+        // Prepare request payload - CosmosAPI requires model to be specified
         const payload = {
-          model: this.config.model || 'default',
+          model: options?.model || this.config.model || 'gpt-5-mini', // Use gpt-5-mini as default
           messages: formattedMessages,
           temperature: options?.temperature ?? this.config.temperature ?? 0.7,
           max_tokens: options?.maxTokens ?? this.config.maxTokens ?? 4096,
@@ -64,7 +64,7 @@ export class CosmosProvider extends BaseAIProvider {
         });
 
         // Make API call to CosmosAPI
-        const response = await this.client.post('/api/v1/chat/completions', payload);
+        const response = await this.client.post('/v1/chat/completions', payload);
 
         // Extract response based on CosmosAPI format
         const content = response.data.choices?.[0]?.message?.content || 
@@ -114,24 +114,16 @@ export class CosmosProvider extends BaseAIProvider {
   }
 
   async generateCode(prompt: string, language?: string): Promise<{ code: string; language: string; explanation: string }> {
-    // Use specialized code generation prompt
-    const systemMessage = `You are an expert ${language || 'software'} developer using CosmosAPI. Generate high-quality, production-ready code following best practices.
-    
-Requirements:
-- Write clean, well-structured code
-- Include appropriate error handling
-- Add helpful comments
-- Follow ${language || 'programming'} language conventions
-- Return ONLY the code without any markdown formatting or explanations`;
+    // Combine system prompt with user prompt to avoid system role issues
+    const enhancedPrompt = `${language ? `Write ${language} code.` : 'Write code.'} ${prompt}\n\nRequirements:\n- Write clean, well-structured code\n- Include appropriate error handling\n- Add helpful comments\n- Return ONLY the code without explanations`;
 
     const messages: AIMessage[] = [
-      { role: 'system', content: systemMessage },
-      { role: 'user', content: prompt }
+      { role: 'user', content: enhancedPrompt }
     ];
 
     const response = await this.generateCompletion(messages, {
-      temperature: 0.3, // Lower temperature for more consistent code
-      maxTokens: 8192  // Higher token limit for code generation
+      temperature: 0.7, // Use same temperature as working test
+      maxTokens: 2000  // Use reasonable token limit
     });
 
     // Clean up any markdown formatting if present
@@ -174,27 +166,31 @@ Requirements:
   }
 
   async chat(systemPrompt: string, userMessage: string): Promise<string> {
+    // Combine system and user prompts to avoid system role issues
+    const combinedMessage = systemPrompt ? `${systemPrompt}\n\n${userMessage}` : userMessage;
     const messages: AIMessage[] = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userMessage }
+      { role: 'user', content: combinedMessage }
     ];
     const response = await this.generateCompletion(messages);
     return response.content;
   }
 
   async analyzeCode(code: string): Promise<any> {
-    const systemMessage = `You are a code analysis expert using CosmosAPI. Analyze the given code and provide insights about:
+    // Combine system instructions with user request
+    const analysisPrompt = `Analyze the following code and provide insights about:
 - Code quality and structure
 - Potential bugs or issues
 - Performance considerations
 - Best practices violations
 - Suggestions for improvement
 
-Provide a structured JSON response.`;
+Provide a structured JSON response.
+
+Code to analyze:
+${code}`;
 
     const messages: AIMessage[] = [
-      { role: 'system', content: systemMessage },
-      { role: 'user', content: `Analyze this code:\n\n${code}` }
+      { role: 'user', content: analysisPrompt }
     ];
 
     const response = await this.generateCompletion(messages, {
@@ -221,7 +217,7 @@ Provide a structured JSON response.`;
    */
   async testConnection(): Promise<boolean> {
     try {
-      const response = await this.client.get('/health', {
+      const response = await this.client.get('/v1/models', {
         timeout: 5000
       });
       return response.status === 200;
@@ -229,8 +225,8 @@ Provide a structured JSON response.`;
       this.logger.warn('CosmosAPI health check failed:', error);
       // Try alternate endpoint with minimal request
       try {
-        const response = await this.client.post('/api/v1/chat/completions', {
-          model: this.config.model || 'default',
+        const response = await this.client.post('/v1/chat/completions', {
+          model: this.config.model || 'gpt-5-mini',
           messages: [{ role: 'user', content: 'test' }],
           max_tokens: 1
         });

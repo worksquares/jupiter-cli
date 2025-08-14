@@ -49,9 +49,15 @@ export class AIProviderFactory {
 
   static async getDefaultProvider(): Promise<AIProvider> {
     // ALWAYS use CosmosAPI - no alternatives
-    const model = process.env.AI_MODEL || 'default';
-    const apiKey = process.env.AI_API_KEY;
-    const baseUrl = process.env.AI_BASE_URL || 'https://cosmosapi.digisquares.com';
+    const model = process.env.AI_MODEL || 'gpt-5-mini';
+    // Try multiple possible env vars for API key
+    const apiKey = process.env.AI_API_KEY || 
+                   process.env.COSMOS_API_KEY || 
+                   process.env.COSMOSAPI_KEY;
+    const baseUrl = process.env.AI_BASE_URL || 
+                    process.env.COSMOS_API_URL || 
+                    process.env.COSMOSAPI_URL || 
+                    'https://cosmosapi.digisquares.com';
 
     this.logger.info('Using CosmosAPI provider (the only supported provider)');
     

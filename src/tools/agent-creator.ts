@@ -38,6 +38,12 @@ export class AgentCreatorAdapter extends BaseToolAdapter<
     }
   };
 
+  private agent?: any;
+
+  setAgent(agent: any): void {
+    this.agent = agent;
+  }
+
   async execute(params: { description: string; existingAgents?: string[] }) {
     const { description, existingAgents = [] } = params;
 
@@ -153,9 +159,16 @@ Remember: Create autonomous experts capable of handling designated tasks with mi
   }
 
   private getAIProvider(): any {
-    // This should be injected or retrieved from context
-    // For now, throwing error to indicate it needs to be implemented
-    throw new Error('AI provider not available in agent creator');
+    // Get the agent's AI provider if available
+    if (this.agent && 'aiProvider' in this.agent) {
+      const agentWithProvider = this.agent as any;
+      if (agentWithProvider.aiProvider) {
+        return agentWithProvider.aiProvider;
+      }
+    }
+    
+    // Fallback to creating a new provider
+    throw new Error('AI provider not available - agent must have initialized AI provider');
   }
 }
 

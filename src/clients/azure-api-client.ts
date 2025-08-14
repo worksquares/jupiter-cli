@@ -174,6 +174,57 @@ export interface AutomationDeployRequest {
   secrets?: Record<string, string>;
 }
 
+// Blob Storage Types
+export interface BlobStorageAccountRequest {
+  name: string;
+  location?: string;
+  sku?: string;
+  kind?: string;
+  accessTier?: string;
+  enableHttpsOnly?: boolean;
+  tags?: Record<string, string>;
+}
+
+export interface BlobContainerRequest {
+  name: string;
+  publicAccess?: 'none' | 'blob' | 'container';
+  metadata?: Record<string, string>;
+}
+
+export interface BlobUploadRequest {
+  containerName: string;
+  blobName: string;
+  content: string | Buffer;
+  contentType?: string;
+  metadata?: Record<string, string>;
+  overwrite?: boolean;
+}
+
+export interface StaticWebsiteRequest {
+  indexDocument: string;
+  errorDocument404?: string;
+  defaultIndexDocumentPath?: string;
+}
+
+export interface StaticWebsiteDeployRequest {
+  sourcePath: string;
+  indexDocument?: string;
+  errorDocument?: string;
+  cleanDeploy?: boolean;
+  excludePatterns?: string[];
+  cdnEnabled?: boolean;
+  customDomain?: string;
+}
+
+export interface SASTokenRequest {
+  containerName: string;
+  blobName?: string;
+  permissions?: string;
+  expiryMinutes?: number;
+  ipRange?: string;
+  protocol?: 'https' | 'http,https';
+}
+
 // API Response Types
 export interface APIResponse<T = any> {
   success: boolean;
@@ -600,6 +651,149 @@ export class AzureAPIClient {
 
   async renewSSLCertificate(domain: string): Promise<APIResponse> {
     const response = await this.client.post(`/api/v1/ssl/renew/${domain}`);
+    return response.data;
+  }
+
+  // ==================== Blob Storage API ====================
+  async createStorageAccount(request: BlobStorageAccountRequest): Promise<APIResponse> {
+    const response = await this.client.post('/api/v1/blob-storage/accounts', request);
+    return response.data;
+  }
+
+  async getStorageAccount(accountName: string): Promise<APIResponse> {
+    const response = await this.client.get(`/api/v1/blob-storage/accounts/${accountName}`);
+    return response.data;
+  }
+
+  async listStorageAccounts(): Promise<APIResponse> {
+    const response = await this.client.get('/api/v1/blob-storage/accounts');
+    return response.data;
+  }
+
+  async deleteStorageAccount(accountName: string): Promise<APIResponse> {
+    const response = await this.client.delete(`/api/v1/blob-storage/accounts/${accountName}`);
+    return response.data;
+  }
+
+  async getStorageAccountKeys(accountName: string): Promise<APIResponse> {
+    const response = await this.client.get(`/api/v1/blob-storage/accounts/${accountName}/keys`);
+    return response.data;
+  }
+
+  async createContainer(accountName: string, request: BlobContainerRequest): Promise<APIResponse> {
+    const response = await this.client.post(`/api/v1/blob-storage/${accountName}/containers`, request);
+    return response.data;
+  }
+
+  async listBlobContainers(accountName: string): Promise<APIResponse> {
+    const response = await this.client.get(`/api/v1/blob-storage/${accountName}/containers`);
+    return response.data;
+  }
+
+  async deleteBlobContainer(accountName: string, containerName: string): Promise<APIResponse> {
+    const response = await this.client.delete(`/api/v1/blob-storage/${accountName}/containers/${containerName}`);
+    return response.data;
+  }
+
+  async uploadBlob(accountName: string, containerName: string, file: File | Buffer, options?: {
+    blobName?: string;
+    metadata?: Record<string, string>;
+    overwrite?: boolean;
+  }): Promise<APIResponse> {
+    const formData = new FormData();
+    if (file instanceof File) {
+      formData.append('file', file);
+    } else {
+      formData.append('file', new Blob([file]));
+    }
+    if (options?.blobName) formData.append('blobName', options.blobName);
+    if (options?.metadata) formData.append('metadata', JSON.stringify(options.metadata));
+    if (options?.overwrite !== undefined) formData.append('overwrite', String(options.overwrite));
+
+    const response = await this.client.post(
+      `/api/v1/blob-storage/${accountName}/${containerName}/upload`,
+      formData,
+      { headers: { 'Content-Type': 'multipart/form-data' } }
+    );
+    return response.data;
+  }
+
+  async listBlobs(accountName: string, containerName: string, options?: {
+    prefix?: string;
+    maxResults?: number;
+  }): Promise<APIResponse> {
+    const params = new URLSearchParams();
+    if (options?.prefix) params.append('prefix', options.prefix);
+    if (options?.maxResults) params.append('maxResults', String(options.maxResults));
+    
+    const response = await this.client.get(
+      `/api/v1/blob-storage/${accountName}/${containerName}/blobs`,
+      { params }
+    );
+    return response.data;
+  }
+
+  async downloadBlob(accountName: string, containerName: string, blobName: string): Promise<APIResponse> {
+    const response = await this.client.get(
+      `/api/v1/blob-storage/${accountName}/${containerName}/blob/${blobName}`,
+      { responseType: 'blob' }
+    );
+    return response.data;
+  }
+
+  async deleteBlob(accountName: string, containerName: string, blobName: string): Promise<APIResponse> {
+    const response = await this.client.delete(
+      `/api/v1/blob-storage/${accountName}/${containerName}/blob/${blobName}`
+    );
+    return response.data;
+  }
+
+  async generateBlobSASUrl(accountName: string, request: SASTokenRequest): Promise<APIResponse> {
+    const response = await this.client.post(`/api/v1/blob-storage/${accountName}/sas`, request);
+    return response.data;
+  }
+
+  async enableStaticWebsite(accountName: string, request: StaticWebsiteRequest): Promise<APIResponse> {
+    const response = await this.client.post(
+      `/api/v1/blob-storage/${accountName}/static-website/enable`,
+      request
+    );
+    return response.data;
+  }
+
+  async disableStaticWebsite(accountName: string): Promise<APIResponse> {
+    const response = await this.client.post(`/api/v1/blob-storage/${accountName}/static-website/disable`);
+    return response.data;
+  }
+
+  async getStaticWebsiteStatus(accountName: string): Promise<APIResponse> {
+    const response = await this.client.get(`/api/v1/blob-storage/${accountName}/static-website/status`);
+    return response.data;
+  }
+
+  async deployStaticWebsite(accountName: string, request: StaticWebsiteDeployRequest): Promise<APIResponse> {
+    const response = await this.client.post(
+      `/api/v1/blob-storage/${accountName}/static-website/deploy`,
+      request
+    );
+    return response.data;
+  }
+
+  async updateStaticWebsite(accountName: string, sourcePath: string, filesToUpdate?: string[]): Promise<APIResponse> {
+    const response = await this.client.post(
+      `/api/v1/blob-storage/${accountName}/static-website/update`,
+      { sourcePath, filesToUpdate }
+    );
+    return response.data;
+  }
+
+  async getStaticWebsiteUrl(accountName: string): Promise<APIResponse> {
+    const response = await this.client.get(`/api/v1/blob-storage/${accountName}/static-website/url`);
+    return response.data;
+  }
+
+  async getStorageMetrics(accountName: string): Promise<APIResponse> {
+    const response = await this.client.get(`/api/v1/blob-storage/${accountName}/metrics`);
     return response.data;
   }
   
