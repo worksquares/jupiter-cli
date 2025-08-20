@@ -1,0 +1,31 @@
+Jupiter CLI
+Copyright (c) 2025 DigiSquares
+
+This product includes software developed by DigiSquares.
+
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+
+This project incorporates components from the following projects:
+
+1. Google Gemini CLI
+   - Copyright 2025 Google LLC
+   - Licensed under the Apache License, Version 2.0
+   - Source: https://github.com/google/generative-ai-cli
+   
+   Portions of the codebase in the /src directory are derived from
+   Google's Gemini CLI project. DigiSquares has made substantial
+   modifications including but not limited to:
+   - Multi-provider AI support
+   - Enterprise security features
+   - Custom UI themes and branding
+   - Commercial licensing model
+   - Advanced automation modes
+
+Jupiter CLI Licensing:
+- Personal use: Free to use without restrictions  
+- Commercial use: Requires DigiSquares API key and license agreement
+
+The original Apache 2.0 license text can be found at:
+http://www.apache.org/licenses/LICENSE-2.0
+
+For the full list of dependencies and their licenses, see package.json.
