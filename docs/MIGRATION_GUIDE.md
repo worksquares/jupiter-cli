@@ -106,5 +106,5 @@ If you need to rollback to Gemini CLI:
 ## Support
 
 For additional help with migration:
-- Report issues at: https://github.com/digisquares/jupiter/issues
-- Check the documentation at: https://docs.jupiter-cli.com
+- Report issues at: https://github.com/worksquares/jupiter-cli/issues
+- Check the documentation at: https://jupiter.digisquares.com/docs

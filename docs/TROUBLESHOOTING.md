@@ -280,13 +280,13 @@ DEBUG=jupiter:config npm start
 
 If these solutions don't resolve your issue:
 
-1. Check existing issues: https://github.com/digisquares/jupiter/issues
+1. Check existing issues: https://github.com/worksquares/jupiter-cli/issues
 2. Create a new issue with:
    - Error message
    - Steps to reproduce
    - Environment details (OS, Node version)
    - Debug output
-3. Contact support: contact@digisquares.com
+3. Contact support: support@jupiter.digisquares.com
 
 ## Known Issues
 
