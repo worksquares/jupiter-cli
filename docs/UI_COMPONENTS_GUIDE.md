@@ -291,7 +291,7 @@ Falling code effect:
 - **Character Rain**: Matrix-style effect
 - **Fade Transition**: Smooth fade to main UI
 
-### 2. Gemini Responding Spinner (`GeminiRespondingSpinner.tsx`)
+### 2. Jupiter Responding Spinner (`JupiterRespondingSpinner.tsx`)
 
 AI thinking animation:
 

@@ -122,7 +122,7 @@ jupiter --agent -p "optimize database queries"
 
 ## Getting API Keys
 
-- **DigiSquares**: [https://digisquares.com](https://digisquares.com)
+- **DigiSquares**: [https://jupiter.digisquares.com](https://jupiter.digisquares.com)
 - **OpenAI**: [https://platform.openai.com](https://platform.openai.com)
 - **Anthropic**: [https://console.anthropic.com](https://console.anthropic.com)
 - **Google**: [https://makersuite.google.com](https://makersuite.google.com)
